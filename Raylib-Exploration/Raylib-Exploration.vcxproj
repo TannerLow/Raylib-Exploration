@@ -161,10 +161,17 @@
   <ItemGroup>
     <ClCompile Include="main.c" />
     <ClCompile Include="src\o2\arena.c" />
+    <ClCompile Include="src\o2\math.c" />
+    <ClCompile Include="src\o2\raylib\asset.c" />
+    <ClCompile Include="src\o2\raylib\display.c" />
     <ClCompile Include="src\o2\time.c" />
+    <ClCompile Include="src\o2\world.c" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="include\o2\arena.h" />
+    <ClInclude Include="include\o2\math.h" />
+    <ClInclude Include="include\o2\raylib\asset.h" />
+    <ClInclude Include="include\o2\raylib\display.h" />
     <ClInclude Include="include\o2\time.h" />
     <ClInclude Include="include\o2\types.h" />
     <ClInclude Include="include\o2\world.h" />

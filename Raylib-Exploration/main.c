@@ -6,6 +6,9 @@
 #include <o2/arena.h>
 #include <o2/world.h>
 #include <assert.h>
+#include <o2/raylib/display.h>
+#include <o2/math.h>
+#include <o2/raylib/asset.h>
 
 void printError(const char* message, const char* file, int lineNumber);
 void simpleNumToString(char* output, int num, int maxDigits);
@@ -14,7 +17,7 @@ int main() {
 	int returnCode = EXIT_SUCCESS;
 	
 	Texture wabbit = { 0 };
-	Texture tileSpriteSheet = { 0 };
+	Texture tilesTexture = { 0 };
 
 	size_t heapSize = 4 * MEGABYTE;
 	uint8* memory = (uint8*)malloc(heapSize);
@@ -55,30 +58,16 @@ int main() {
 			goto CLEAN_RESOURCES;
 		}
 
-		tileSpriteSheet = LoadTexture("resources/tile_sheet.png");
-		if (!IsTextureValid(tileSpriteSheet)) {
+		tilesTexture = LoadTexture("resources/tile_sheet.png");
+		if (!IsTextureValid(tilesTexture)) {
 			printError("Failed to load texture: resources/tile_sheet.png", __FILE__, __LINE__);
 			returnCode = EXIT_FAILURE;
 			goto CLEAN_RESOURCES;
 		}
 		int tileWidth = 32;
 		int tileHeight = 32;
-		int tileSpriteCount = (tileSpriteSheet.width / tileWidth) * (tileSpriteSheet.height / tileHeight);
-		Rectangle* tileTexCoords = (Rectangle*)o2_arena_pushArray(&globalArena, sizeof(Rectangle), tileSpriteCount);
-		{
-			int rows = (tileSpriteSheet.height / tileHeight);
-			int cols = (tileSpriteSheet.width / tileWidth);
-			for (int row = 0; row < rows; row++) {
-				for (int col = 0; col < cols; col++) {
-					Rectangle* rect = tileTexCoords + (row * cols + col);
-					rect->x = col * tileWidth;
-					rect->y = row * tileHeight;
-					rect->width = tileWidth;
-					rect->height = tileHeight;
-				}
-			}
-		}
-		assert(tileSpriteCount == 4);
+		SpriteSheet tileSpriteSheet = o2_asset_createUniformSpriteSheet(&globalArena, tilesTexture, tileWidth, tileHeight);
+
 
 		Camera2D worldCamera = {
 			.offset = (Vector2){width / 2.0, height / 2.0},
@@ -87,6 +76,14 @@ int main() {
 			.zoom = 1.f
 		};
 		int worldCameraSpeed = 200;
+		float zoomLevels[3] = { 0.5f, 1.0f, 1.5f };
+		int maxZoomLevel = 2;
+		int currentZoomLevel = 1;
+		//worldCamera.target = (Vector2){ -8000, -8000 };
+
+		int basePanelHeight = 224;
+		BasePanel basePanel;
+		o2_display_initBasePanel(&basePanel, (Rectangle) { 0, screenHeight - basePanelHeight, screenWidth, basePanelHeight });
 
 		char fpsDigits[8];
 		const int maxFpsDigits = 7;
@@ -104,6 +101,11 @@ int main() {
 			.last = 0
 		};
 
+		o2_Limiter mouseInputLimiter = {
+			.threshold = 1.0 / fpsTarget,
+			.last = 0
+		};
+
 		int rowsOfChunks = 32;
 		int colsOfChunks = 32;
 		uint8 chunkRows = 16;
@@ -114,30 +116,15 @@ int main() {
 		int minChunkY = 0 - rowsOfChunks / 2;
 		int maxChunkX = minChunkX + colsOfChunks;
 		int maxChunkY = minChunkY + rowsOfChunks;
-		o2_Chunk* chunks = (o2_Chunk*)o2_arena_pushArray(&globalArena, sizeof(o2_Chunk), rowsOfChunks * colsOfChunks);
-		
-		for (int chunkRow = 0; chunkRow < rowsOfChunks; chunkRow++) {
-			for (int chunkCol = 0; chunkCol < colsOfChunks; chunkCol++) {
-				
-				o2_Chunk* chunk = chunks + (chunkRow * colsOfChunks + chunkCol);
-				chunk->rows = chunkRows;
-				chunk->cols = chunkCols;
-				chunk->worldX = chunkCol + minChunkX;
-				chunk->worldY = chunkRow + minChunkY;
-				chunk->tiles = (o2_Tile*)o2_arena_pushArray(&globalArena, sizeof(o2_Tile), chunkRows * chunkCols);
-
-				for (uint8 row = 0; row < chunkRows; row++) {
-					for (uint8 col = 0; col < chunkCols; col++) {
-						
-						o2_Tile* tile = chunk->tiles + (row * chunk->cols + col);
-						tile->row = row;
-						tile->col = col;
-						tile->id = GRASS;
-
-					}
-				}
-			}
-		}
+		o2_WorldSettings worldSettings = {
+			.rowsOfChunks = 32,
+			.colsOfChunks = 32,
+			.rowsOfTiles = 16,
+			.colsOfTiles = 16,
+			.tileWidth = tileWidth,
+			.tileHeight = tileHeight
+		};
+		o2_World world = o2_world_createWorld(&globalArena, worldSettings);
 
 		printf("Min chunk coords: %d %d\n", minChunkX, minChunkY);
 		printf("Max chunk coords: %d %d\n", maxChunkX, maxChunkY);
@@ -150,6 +137,31 @@ int main() {
 			if (IsWindowResized()) {
 				screenWidth = GetScreenWidth();
 				screenHeight = GetScreenHeight();
+			}
+
+			if (o2_time_limiterResetIfReady(&mouseInputLimiter, currentTime)) {
+				float mouseWheel = GetMouseWheelMove();
+				if (mouseWheel != 0) {
+					printf("Mouse Wheel %g\n", mouseWheel);
+					if (mouseWheel > 0) {
+						currentZoomLevel = o2_math_imax(0, currentZoomLevel - 1);
+					}
+					else {
+						currentZoomLevel = o2_math_imin(maxZoomLevel, currentZoomLevel + 1);
+					}
+					worldCamera.zoom = zoomLevels[currentZoomLevel];
+				}
+
+				if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+
+				}
+				if (IsMouseButtonReleased(MOUSE_BUTTON_LEFT)) {
+					Vector2 mouseWorldPos = GetScreenToWorld2D(GetMousePosition(), worldCamera);
+					o2_Tile* tile = o2_world_getTileAtPos(&world, mouseWorldPos.x, mouseWorldPos.y);
+					if (tile) {
+						tile->id = WATER;
+					}
+				}
 			}
 
 			if (o2_time_limiterReady(&movementLimiter, currentTime)) {
@@ -177,14 +189,6 @@ int main() {
 
 				Vector2 worldCameraTopLeft = GetScreenToWorld2D((Vector2) { 0, 0 }, worldCamera);
 				Vector2 worldCameraBottomRight = GetScreenToWorld2D((Vector2) { screenWidth, screenHeight }, worldCamera);
-				int minVisibleChunkX = worldCameraTopLeft.x / chunkWidth;
-				int minVisibleChunkY = worldCameraTopLeft.y / chunkHeight;
-				int maxVisibleChunkX = worldCameraBottomRight.x / chunkWidth;
-				int maxVisibleChunkY = worldCameraBottomRight.y / chunkHeight;
-				if (worldCameraTopLeft.x < 0) minVisibleChunkX--;
-				if (worldCameraTopLeft.y < 0) minVisibleChunkY--;
-				if (worldCameraBottomRight.x < 0) maxVisibleChunkX--;
-				if (worldCameraBottomRight.y < 0) maxVisibleChunkY--;
 
 				// drawing
 				BeginDrawing();
@@ -192,33 +196,10 @@ int main() {
 					ClearBackground(BLACK);
 						
 					BeginMode2D(worldCamera);
-					for (int row = minVisibleChunkY; row <= maxVisibleChunkY; row++) {
-						if (minChunkY <= row and row < maxChunkY) {
-							for (int col = minVisibleChunkX; col <= maxVisibleChunkX; col++) {
-								if (minChunkX <= col and col < maxChunkX) {
-									
-									o2_Chunk* chunk = chunks + ((row - minChunkY) * colsOfChunks + (col - minChunkX));
-									int chunkX = chunk->worldX * chunkWidth;
-									int chunkY = chunk->worldY * chunkHeight;
-									
-									for (uint8 tileRow = 0; tileRow < chunk->rows; tileRow++) {
-										for (uint8 tileCol = 0; tileCol < chunk->cols; tileCol++) {
+						o2_display_drawWorld(&world, worldCameraTopLeft, worldCameraBottomRight, tileSpriteSheet);
+					EndMode2D();
 
-											Vector2 position = (Vector2) {
-												tileCol * tileWidth + chunkX, 
-												tileRow * tileHeight + chunkY
-											};
-											o2_Tile* tile = chunk->tiles + (tileRow * chunk->cols + tileRow);
-											DrawTextureRec(tileSpriteSheet, tileTexCoords[tile->id], position, WHITE);
-										}
-									}
-								}
-							}
-						}
-					}
-					EndMode2D(worldCamera);
-
-					//DrawRectangle(0, 0, 1280, 720, WHITE);
+					o2_display_drawBasePanel(&basePanel);
 
 					// draw some text using the default font
 					DrawText("Hello Raylib", 200, 200, 20, WHITE);
@@ -237,8 +218,8 @@ CLEAN_RESOURCES:
 	if (IsTextureValid(wabbit)) {
 		UnloadTexture(wabbit);
 	}
-	if (IsTextureValid(tileSpriteSheet)) {
-		UnloadTexture(tileSpriteSheet);
+	if (IsTextureValid(tilesTexture)) {
+		UnloadTexture(tilesTexture);
 	}
 	if (IsWindowReady()) {
 		CloseWindow();
